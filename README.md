@@ -2,7 +2,7 @@
 
 Automated installer for Void Linux with LUKS2 encryption, BTRFS filesystem, and UEFI support.
 
-**Inspired by**: [easy-arch](https://github.com/classy-giraffe/easy-arch)
+**Inspired by**: [easy-arch](https://github.com/classy-giraffe/easy-arch) and [VoidLinuxInstaller](https://github.com/Le0xFF/VoidLinuxInstaller)
 
 ## Features
 

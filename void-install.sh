@@ -301,10 +301,12 @@ wipefs -a "$DISK" >/dev/null 2>&1
 sgdisk --zap-all "$DISK" >/dev/null 2>&1
 
 print_info "Creating partitions..."
+# Generate unique labels based on disk name to avoid conflicts with other drives
+DISK_SUFFIX=$(basename "$DISK")
 # Create 300MB EFI partition
-sgdisk -n 1:0:+300M -t 1:ef00 -c 1:"ESP" "$DISK" >/dev/null 2>&1
+sgdisk -n 1:0:+300M -t 1:ef00 -c 1:"ESP_${DISK_SUFFIX}" "$DISK" >/dev/null 2>&1
 # Create Linux partition with the remaining space
-sgdisk -n 2:0:0 -t 2:8300 -c 2:"CRYPTROOT" "$DISK" >/dev/null 2>&1
+sgdisk -n 2:0:0 -t 2:8300 -c 2:"CRYPTROOT_${DISK_SUFFIX}" "$DISK" >/dev/null 2>&1
 
 # Refresh partition table (multiple methods for better reliability)
 print_info "Refreshing partition table..."
@@ -329,9 +331,9 @@ if [ ! -e "$disk_efi" ] || [ ! -e "$disk_root" ]; then
     exit 1
 fi
 
-# Assigning PARTLABEL paths for easier reference
-ESP="/dev/disk/by-partlabel/ESP"
-CRYPTROOT="/dev/disk/by-partlabel/CRYPTROOT"
+# Assigning PARTLABEL paths for easier reference (with unique disk suffix)
+ESP="/dev/disk/by-partlabel/ESP_${DISK_SUFFIX}"
+CRYPTROOT="/dev/disk/by-partlabel/CRYPTROOT_${DISK_SUFFIX}"
 
 # Formatting the ESP as FAT32
 print_info "Formatting the EFI Partition as FAT32..."
@@ -463,7 +465,8 @@ EOF
 
 # Setting up LUKS2 encryption in grub.
 print_info "Setting up grub config."
-UUID=$(blkid -s UUID -o value $CRYPTROOT)
+# Use the actual device path to ensure we get the correct UUID
+UUID=$(blkid -s UUID -o value "$disk_root")
 sed -i "\,^GRUB_CMDLINE_LINUX=\"\",s,\",&rd.luks.name=$UUID=cryptroot root=$btrfs_device," /mnt/etc/default/grub
 
 # Setting the root password.
@@ -481,7 +484,7 @@ fi
 
 # Export variables before chroot
 print_info "Passing variables to chroot environment..."
-export USERNAME ESP CRYPTROOT LUKS_PASSWORD disk_root UUID REPOSITORY_VOID_PACKAGES
+export USERNAME ESP CRYPTROOT LUKS_PASSWORD disk_root disk_efi UUID REPOSITORY_VOID_PACKAGES
 
 # Chroot and finalize the installation
 print_info "Finalizing the installation in chroot environment..."
@@ -572,7 +575,8 @@ ln -s /etc/sv/grub-btrfs /etc/runit/runsvdir/default/
 
 # Add the EFI mount to fstab
 print_info "Adding EFI mount to fstab..."
-ESP_UUID=$(blkid -s UUID -o value "$ESP")
+# Use the actual device path to ensure we get the correct UUID
+ESP_UUID=$(blkid -s UUID -o value "$disk_efi")
 echo "UUID=$ESP_UUID  /boot/efi  vfat  defaults,noatime  0 2" >> /etc/fstab
 
 # Configure AppArmor

@@ -46,7 +46,7 @@ format_time() {
     local hours=$((seconds / 3600))
     local minutes=$(((seconds % 3600) / 60))
     local secs=$((seconds % 60))
-    
+
     if [ "$hours" -gt 0 ]; then
         echo "${hours}h:${minutes}m:${secs}s"
     elif [ "$minutes" -gt 0 ]; then
@@ -113,7 +113,7 @@ root_password_selector() {
         return 1
     fi
     echo
-    
+
     print_info "Please enter the password again (you're not going to see it): "
     read -r -s root_password_2
     echo
@@ -148,7 +148,7 @@ user_password_selector() {
         return 1
     fi
     echo
-    
+
     print_info "Please enter the password again (you're not going to see it): "
     read -r -s user_password_2
     echo
@@ -477,7 +477,7 @@ xchroot /mnt usermod -p "$(openssl passwd -6 "${ROOT_PASSWORD}")" root >/dev/nul
 if [[ -n "$USERNAME" ]]; then
     echo "%wheel ALL=(ALL:ALL) ALL" >/mnt/etc/sudoers.d/10-wheel
     print_info "Adding the user $USERNAME to the system with root privilege..."
-    xchroot /mnt useradd -m -G wheel,users -s /bin/bash "$USERNAME" >/dev/null 2>&1
+    xchroot /mnt useradd -m -G wheel,users,network -s /bin/bash "$USERNAME" >/dev/null 2>&1
     print_info "Setting user password for $USERNAME..."
     xchroot /mnt usermod -p "$(openssl passwd -6 "${USER_PASSWORD}")" "$USERNAME" >/dev/null 2>&1
 fi
@@ -610,7 +610,7 @@ print_info "Checking if Void packages repository should be added..."
 if [ "$REPOSITORY_VOID_PACKAGES" = "true" ]; then
     print_info "Adding the Void packages repository..."
     mkdir -p /home/"$USERNAME"/void-packages
-    chown -R "$USERNAME":users /home/"$USERNAME"/void-packages 
+    chown -R "$USERNAME":users /home/"$USERNAME"/void-packages
     sudo -u "$USERNAME" git clone https://github.com/void-linux/void-packages.git /home/"$USERNAME"/void-packages >/dev/null 2>&1
     print_info "Enabling restricted packages..."
     echo "XBPS_ALLOW_RESTRICTED=yes" >> /home/"$USERNAME"/void-packages/etc/conf

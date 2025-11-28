@@ -31,7 +31,7 @@ REPO='https://repo-de.voidlinux.org/current'
 print_msg() {
     local color=$1
     local message=$2
-    printf "\n${color}[::] %s${NC}\n" "$message"
+    printf "\n${color}==> %s${NC}\n" "$message"
 }
 
 # Convenience functions for different message types
@@ -345,7 +345,7 @@ printf "%s" "$LUKS_PASSWORD" | cryptsetup luksFormat "$disk_root" \
     --type luks2 \
     --label VOID_LUKS \
     --pbkdf pbkdf2 \
-    --pbkdf-force-iterations 500000 \
+    --pbkdf-force-iterations 400000 \
     -d - >/dev/null 2>&1
 
 # Open the LUKS container
@@ -493,7 +493,7 @@ xchroot /mnt /bin/bash -e <<'EOF'
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-BLUE='\036[0;34m'
+BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 

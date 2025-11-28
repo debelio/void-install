@@ -540,7 +540,7 @@ sed -i "/#TIMEZONE=/s|.*|TIMEZONE="Europe/Sofia"|" /etc/rc.conf
 # Set the locale
 print_info "Setting the locales in /etc/default/libc-locales..."
 sed -i '/^#en_US.UTF-8 UTF-8/s/^#//' /etc/default/libc-locales
-sed -i '/^#bg_BG CP1251/s/^#//' /etc/default/libc-locales
+sed -i '/^#bg_BG.UTF-8 UTF-8/s/^#//' /etc/default/libc-locales
 xbps-reconfigure -f glibc-locales >/dev/null 2>&1
 
 # Install and configure GRUB

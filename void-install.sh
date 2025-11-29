@@ -253,9 +253,9 @@ ping -c 2 kernel.org &>/dev/null || {
 
 # Update and install necessary packages
 print_info "Updating xbps."
-xbps-install -Syvu xbps &>/dev/null
+xbps-install -Syv xbps &>/dev/null
 print_info "Installing necessary packages."
-xbps-install -Syvu gptfdisk &>/dev/null
+xbps-install -Syv gptfdisk &>/dev/null
 
 # Setting up LUKS password
 until luks_password_selector; do :; done
@@ -287,7 +287,6 @@ do
         print_error "Invalid selection! Please try again or press CTRL+C to exit."
     fi
 done
-print_info "Void Linux will be installed on the following disk: $DISK."
 
 ## Disk Partitioning and Encryption
 #
@@ -416,11 +415,11 @@ cp /var/db/xbps/keys/* /mnt/var/db/xbps/keys/
 
 # First install just the base packages
 print_info "Installing base system."
-xbps-install -Syvur /mnt -R "$REPO" base-system &>/dev/null
+xbps-install -Syvr /mnt -R "$REPO" base-system &>/dev/null
 
 # Then proceed with the rest of the packages
 print_info "Installing additional packages."
-xbps-install -Syvur /mnt -R "$REPO" btrfs-progs cryptsetup grub-x86_64-efi \
+xbps-install -Syvr /mnt -R "$REPO" btrfs-progs cryptsetup grub-x86_64-efi \
     efibootmgr lvm2 grub-btrfs grub-btrfs-runit NetworkManager polkit apparmor \
     git curl util-linux tar coreutils binutils xtools xmirror void-repo-nonfree \
     void-repo-multilib void-repo-multilib-nonfree gcc curl "$MICROCODE" &>/dev/null
@@ -507,9 +506,6 @@ xchroot /mnt /bin/bash -e <<'EOF'
     echo -e "add_dracutmodules+=\" crypt btrfs resume \"" >>/etc/dracut.conf.d/20-addmodules.conf
     echo -e "tmpdir=/tmp" >>/etc/dracut.conf.d/30-tmpfs.conf
 
-    print_info "Generating new dracut initramfs."
-    dracut --regenerate-all --force --hostonly &>/dev/null
-
     # Set the timezone
     print_info "Setting the timezone in /etc/rc.conf."
     TIMEZONE=$(curl -s http://ip-api.com/line?fields=timezone)
@@ -567,7 +563,7 @@ xchroot /mnt /bin/bash -e <<'EOF'
 
     # Installing zram
     print_info "Installing and configuring zram."
-    xbps-install -Syvu zramen &>/dev/null
+    xbps-install -Syv zramen &>/dev/null
     ln -s /etc/sv/zramen /etc/runit/runsvdir/default/
 
     # Install and configure snapper

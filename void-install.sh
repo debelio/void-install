@@ -13,6 +13,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;36m'
 YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
 NC='\033[0m'
 
 # Track timing
@@ -40,6 +41,18 @@ print_success() { print_msg "$GREEN" "$1"; }
 print_error() { print_msg "$RED" "$1"; }
 print_warning() { print_msg "$YELLOW" "$1"; }
 
+# Print centered text
+print_centered() {
+    local text="$1"
+    local color="${2:-$NC}"
+    local term_width
+    term_width=$(tput cols 2>/dev/null || echo 80)
+    local text_length=${#text}
+    local padding=$(( (term_width - text_length) / 2 ))
+    printf "%${padding}s" ""
+    echo -e "${color}${text}${NC}"
+}
+
 # Format time in seconds to a readable format
 format_time() {
     local seconds=$1
@@ -64,7 +77,7 @@ calculate_and_display_total_time() {
     local total_formatted
     total_formatted=$(format_time $total_time)
 
-    print_info "Total execution time: $total_formatted."
+    print_info "Done. Total execution time: $total_formatted."
 }
 
 # Check if script is run with root permissions
@@ -187,7 +200,7 @@ hostname_selector() {
 # Ask user for confirmation
 void_packages_question() {
     while true; do
-        print_info "Do you want to add the Void packages repository? [y/N]: "
+        print_info "Do you want to add the Void packages repository? [y/n]: "
         read -r response
         case "$response" in
         [yY]|[yY][eE][sS])
@@ -205,13 +218,20 @@ void_packages_question() {
     done
 }
 
-## Main script execution
+### Main script execution
 #
 
 # Clear the screen
 clear
 
-print_info "Starting the Void Linux installation..."
+# Display banner
+term_width=$(tput cols 2>/dev/null || echo 80)
+banner_line=$(printf '=%.0s' $(seq 1 "$term_width"))
+print_centered "$banner_line" "$MAGENTA"
+print_centered "INSTALLING VOID LINUX" "$MAGENTA"
+print_centered "$banner_line" "$MAGENTA"
+
+print_info "Starting the Void Linux installation."
 
 # Check for root permissions before proceeding
 check_root_permissions
@@ -225,17 +245,17 @@ else
 fi
 
 # Checking the internet connection
-print_info "Checking the internet connection..."
-ping -c 2 kernel.org >/dev/null 2>&1 || {
+print_info "Checking the internet connection."
+ping -c 2 kernel.org &>/dev/null || {
     print_error "No internet connection detected, please connect to the internet and try again."
     exit 1
 }
 
 # Update and install necessary packages
-print_info "Updating xbps..."
-xbps-install -Syvu xbps >/dev/null 2>&1
-print_info "Installing necessary packages..."
-xbps-install -Syvu gptfdisk >/dev/null 2>&1
+print_info "Updating xbps."
+xbps-install -Syvu xbps &>/dev/null
+print_info "Installing necessary packages."
+xbps-install -Syvu gptfdisk &>/dev/null
 
 # Setting up LUKS password
 until luks_password_selector; do :; done
@@ -255,62 +275,38 @@ void_packages_question
 
 # Choosing the target for the installation
 print_info "Available disks for the installation:"
-disks=$(find /dev -type b -name 'sd[a-z]' -o -name 'nvme[0-9]n[0-9]' -o -name 'vd[a-z]' | sort)
-i=1
-for disk in $disks; do
-    # Get disk size using fdisk
-    if command -v fdisk >/dev/null 2>&1; then
-        size=$(fdisk -l "$disk" 2>/dev/null | grep -i "Disk $disk:" | awk '{print $3 " " $4}' | tr -d ',')
-        printf "\n%d) %s (%s)\n" "$i" "$disk" "$size"
-    else
-        printf "\n%d) %s\n" "$i" "$disk"
-    fi
-    i=$((i + 1))
-done
-
-if [ -z "$disks" ]; then
-    print_error "No suitable disks found for installation."
-    exit 1
-fi
-
-while true; do
-    printf "Please select the number of the corresponding disk (e.g. 1): "
-    read -r choice
-    i=1
-    DISK=""
-    for disk in $disks; do
-        if [ "$i" = "$choice" ]; then
-            DISK="$disk"
-            break
-        fi
-        i=$((i + 1))
-    done
-
-    if [ -n "$DISK" ]; then
+PS3="Please select the number of the corresponding disk (e.g. 1): "
+IFS=$'\n'
+select CHOICE in $(lsblk -dpnoNAME,SIZE | grep -P "/dev/sd|nvme|vd" | awk '$2 != "0B" {gsub("/dev/", "", $1); print $1 " (" $2 ")"}');
+do
+    if [[ -n "$CHOICE" ]]; then
+        DISK="/dev/${CHOICE%% *}"
+        print_info "Void Linux will be installed on the following disk: $CHOICE"
         break
     else
         print_error "Invalid selection! Please try again or press CTRL+C to exit."
     fi
 done
-
 print_info "Void Linux will be installed on the following disk: $DISK."
 
-# Wiping disk and creating partitions
-print_info "Wiping disk and creating new GPT partition table on $DISK..."
-wipefs -a "$DISK" >/dev/null 2>&1
-sgdisk --zap-all "$DISK" >/dev/null 2>&1
+## Disk Partitioning and Encryption
+#
+# Wiping disk
+print_info "Wiping disk and creating new GPT partition table on $DISK."
+wipefs -a "$DISK" &>/dev/null
+sgdisk --zap-all "$DISK" &>/dev/null
 
-print_info "Creating partitions..."
-# Generate unique labels based on disk name to avoid conflicts with other drives
-DISK_SUFFIX=$(basename "$DISK")
-# Create 300MB EFI partition
-sgdisk -n 1:0:+300M -t 1:ef00 -c 1:"ESP_${DISK_SUFFIX}" "$DISK" >/dev/null 2>&1
+# Creating partitions
+print_info "Creating partitions."
+# Create 1024MB EFI partition
+sgdisk -n 1:0:+1024M -t 1:ef00 -c 1:"ESP" "$DISK" &>/dev/null
 # Create Linux partition with the remaining space
-sgdisk -n 2:0:0 -t 2:8300 -c 2:"CRYPTROOT_${DISK_SUFFIX}" "$DISK" >/dev/null 2>&1
+sgdisk -n 2:0:0 -t 2:8300 -c 2:"CRYPTROOT" "$DISK" &>/dev/null
 
-# Refresh partition table (multiple methods for better reliability)
-print_info "Refreshing partition table..."
-mdev -s >/dev/null 2>&1
+# Refresh partition table
+print_info "Refreshing partition table."
+blockdev --rereadpt "$DISK" &>/dev/null
+sleep 2
 
 # Determine partition names based on device type
 if echo "$DISK" | grep -q "nvme"; then
@@ -320,7 +316,6 @@ else
     disk_efi="${DISK}1"
     disk_root="${DISK}2"
 fi
-
 print_info "Using $disk_efi as EFI partition and $disk_root as root partition."
 
 # Final check if devices exist
@@ -331,109 +326,107 @@ if [ ! -e "$disk_efi" ] || [ ! -e "$disk_root" ]; then
     exit 1
 fi
 
-# Assigning PARTLABEL paths for easier reference (with unique disk suffix)
-ESP="/dev/disk/by-partlabel/ESP_${DISK_SUFFIX}"
-CRYPTROOT="/dev/disk/by-partlabel/CRYPTROOT_${DISK_SUFFIX}"
-
 # Formatting the ESP as FAT32
-print_info "Formatting the EFI Partition as FAT32..."
-mkfs.fat -F 32 -n EFI "$disk_efi" >/dev/null 2>&1
+print_info "Formatting the EFI Partition as FAT32."
+mkfs.fat -F 32 -n EFI "$disk_efi" &>/dev/null
 
 # Creating a LUKS Container for the root partition
-print_info "Creating LUKS Container for the root partition..."
+print_info "Creating LUKS Container for the root partition."
 printf "%s" "$LUKS_PASSWORD" | cryptsetup luksFormat "$disk_root" \
     --type luks2 \
     --label VOID_LUKS \
     --pbkdf pbkdf2 \
     --pbkdf-force-iterations 400000 \
-    -d - >/dev/null 2>&1
+    -d - &>/dev/null
 
 # Open the LUKS container
-print_info "Opening LUKS container..."
-printf "%s" "$LUKS_PASSWORD" | cryptsetup open "$disk_root" cryptroot -d - >/dev/null 2>&1
+print_info "Opening LUKS container."
+printf "%s" "$LUKS_PASSWORD" | cryptsetup open "$disk_root" cryptroot -d - &>/dev/null
 
 # Creating the BTRFS filesystem
-print_info "Formatting the LUKS container as BTRFS..."
-# Check if btrfs control device exists, don't create if it does
-if [ ! -e /dev/btrfs-control ]; then
-    btrfs rescue create-control-device >/dev/null 2>&1
-fi
-
-# Check if cryptroot was successfully opened
-if [ ! -e /dev/mapper/cryptroot ]; then
-    print_error "Failed to create /dev/mapper/cryptroot"
-    ls -la /dev/mapper/
-    exit 1
-fi
-
+print_info "Formatting the LUKS container as BTRFS."
 btrfs_device="/dev/mapper/cryptroot"
-mkfs.btrfs -L VOID "$btrfs_device" >/dev/null 2>&1
+mkfs.btrfs -L VOIDROOT "$btrfs_device" &>/dev/null
 
+## Btrfs Subvolume Creation and Mounting
+#
 # Mount the BTRFS filesystem
-print_info "Mounting BTRFS filesystem..."
+print_info "Mounting BTRFS filesystem."
 mount "$btrfs_device" /mnt
 
-# Creating BTRFS subvolumes
-print_info "Creating BTRFS subvolumes..."
-subvols="@ @snapshots @var/cache @var/log @home @root @opt"
-for subvol in $subvols; do
-    # Create parent directory if needed (everything except the last path component)
-    parent_dir="/mnt/$(dirname "$subvol")"
-    # Only create parent dir if this is a nested subvolume
-    if [ "$parent_dir" != "/mnt/$subvol" ]; then
-        mkdir -p "$parent_dir"
-    fi
-    btrfs subvolume create "/mnt/$subvol" >/dev/null 2>&1
+# Define subvolumes and their mount points
+# Using separate subvolumes allows selective snapshots and excludes certain directories
+declare -A btrfs_subvolumes=(
+    [@]="/mnt"                          # Root subvolume
+    [@cache]="/mnt/var/cache"           # Package cache
+    [@docker]="/mnt/var/lib/docker"     # Docker data
+    [@home]="/mnt/home"                 # User home directories
+    [@libvirt]="/mnt/var/lib/libvirt"   # VM images
+    [@log]="/mnt/var/log"               # System logs
+    [@opt]="/mnt/opt"                   # Optional software
+    [@snapshots]="/mnt/.snapshots"      # Snapper snapshots directory
+    [@spool]="/mnt/var/spool"           # Print and mail queues
+    # TODO: Add @swap subvolume for hibernation support
+    # [@swap]="/mnt/swap"                 # Swap file location for hibernation
+    [@tmp]="/mnt/tmp"                   # Temporary files
+)
+
+# Create all subvolumes
+print_info "Creating Btrfs subvolumes."
+for subvol in "${!btrfs_subvolumes[@]}"; do
+    btrfs subvolume create "/mnt/${subvol}" &>/dev/null
 done
 
 # Mounting the newly created subvolumes
 umount /mnt
-print_info "Mounting the newly created subvolumes..."
 mount_opts="ssd,noatime,compress-force=zstd:3,discard=async"
 
 # Mount root subvolume first
+print_info "Mounting the newly created subvolumes."
 mount -o "$mount_opts",subvol=@ "$btrfs_device" /mnt
 
-# Create all necessary mount points
-mkdir -p /mnt/{home,root,opt,.snapshots,var/log,var/cache,boot}
-
-# Mount all BTRFS subvolumes
-mount -o "$mount_opts",subvol=@home "$btrfs_device" /mnt/home
-mount -o "$mount_opts",subvol=@root "$btrfs_device" /mnt/root
-mount -o "$mount_opts",subvol=@opt "$btrfs_device" /mnt/opt
-mount -o "$mount_opts",subvol=@snapshots "$btrfs_device" /mnt/.snapshots
-mount -o "$mount_opts",subvol=@var/cache "$btrfs_device" /mnt/var/cache
-mount -o "$mount_opts",subvol=@var/log "$btrfs_device" /mnt/var/log
+# Create all necessary mount points and mount subvolumes
+print_info "Creating mount point directories and mounting subvolumes."
+for subvol in "${!btrfs_subvolumes[@]}"; do
+    [[ "$subvol" == "@" ]] && continue
+    mount_point="${btrfs_subvolumes[$subvol]}"
+    mkdir -p "$mount_point"
+    mount -o "${mount_opts},subvol=${subvol}" "$btrfs_device" "$mount_point" &>/dev/null
+done
 
 # Mount the EFI partition
-print_info "Mounting the EFI partition..."
+print_info "Mounting the EFI partition."
 mkdir -p /mnt/boot/efi
 mount -t vfat "$disk_efi" /mnt/boot/efi
 
-# Set CoW attribute for log directory
-chattr +C /mnt/var/log
+# Set CoW attribute for directories that benefit from it
+chattr +C /mnt/var/log &>/dev/null
+# TODO: Uncomment when @swap subvolume is enabled for hibernation
+# chattr +C /mnt/swap &>/dev/null
 
+## Package Installation and System Configuration
+#
 # Detecting CPU microcode and setting variable
 microcode_detector
 
 # Copying RSA keys
-print_info "Copying RSA keys..."
+print_info "Copying RSA keys."
 mkdir -p /mnt/var/db/xbps/keys
 cp /var/db/xbps/keys/* /mnt/var/db/xbps/keys/
 
 # First install just the base packages
-print_info "Installing base system..."
-xbps-install -Syvur /mnt -R "$REPO" base-system >/dev/null 2>&1
+print_info "Installing base system."
+xbps-install -Syvur /mnt -R "$REPO" base-system &>/dev/null
 
 # Then proceed with the rest of the packages
-print_info "Installing additional packages..."
-xbps-install -Syvuyr /mnt -R "$REPO" btrfs-progs cryptsetup grub-x86_64-efi \
+print_info "Installing additional packages."
+xbps-install -Syvur /mnt -R "$REPO" btrfs-progs cryptsetup grub-x86_64-efi \
     efibootmgr lvm2 grub-btrfs grub-btrfs-runit NetworkManager polkit apparmor \
     git curl util-linux tar coreutils binutils xtools xmirror void-repo-nonfree \
-    void-repo-multilib void-repo-multilib-nonfree gcc "$MICROCODE" >/dev/null 2>&1
+    void-repo-multilib void-repo-multilib-nonfree gcc curl "$MICROCODE" &>/dev/null
 
 # Setting up chroot environment
-print_info "Setting up chroot environment..."
+print_info "Setting up chroot environment."
 mount -t proc none /mnt/proc
 mount -t sysfs none /mnt/sys
 mount --rbind /dev /mnt/dev
@@ -441,16 +434,16 @@ mount --rbind /run /mnt/run
 mount --rbind /sys/firmware/efi/efivars /mnt/sys/firmware/efi/efivars/
 
 # Copy DNS info
-print_info "Copying DNS info..."
+print_info "Copying DNS info."
 cp -L /etc/resolv.conf /mnt/etc/
 
 # Setting up the hostname.
-print_info "Setting up the hostname..."
+print_info "Setting up the hostname."
 rm -f /mnt/etc/hostname
 echo "$HOSTNAME" >/mnt/etc/hostname
 
 # Generating /etc/fstab
-print_info "Creating a new fstab..."
+print_info "Creating a new fstab."
 rm -f /mnt/etc/fstab
 xgenfstab /mnt > /mnt/etc/fstab
 
@@ -469,162 +462,162 @@ print_info "Setting up grub config."
 UUID=$(blkid -s UUID -o value "$disk_root")
 sed -i "\,^GRUB_CMDLINE_LINUX=\"\",s,\",&rd.luks.name=$UUID=cryptroot root=$btrfs_device," /mnt/etc/default/grub
 
+## User Account Configuration
+#
 # Setting the root password.
-print_info "Setting the root password..."
-xchroot /mnt usermod -p "$(openssl passwd -6 "${ROOT_PASSWORD}")" root >/dev/null 2>&1
+print_info "Setting the root password."
+xchroot /mnt usermod -p "$(openssl passwd -6 "${ROOT_PASSWORD}")" root &>/dev/null
 
-# Setting the user password.
+# Creating the user and setting the password.
 if [[ -n "$USERNAME" ]]; then
     echo "%wheel ALL=(ALL:ALL) ALL" >/mnt/etc/sudoers.d/10-wheel
-    print_info "Adding the user $USERNAME to the system with root privilege..."
-    xchroot /mnt useradd -m -G wheel,users,network -s /bin/bash "$USERNAME" >/dev/null 2>&1
-    print_info "Setting user password for $USERNAME..."
-    xchroot /mnt usermod -p "$(openssl passwd -6 "${USER_PASSWORD}")" "$USERNAME" >/dev/null 2>&1
+    print_info "Adding the user $USERNAME to the system with root privilege."
+    xchroot /mnt useradd -m -G wheel,users,network -s /bin/bash "$USERNAME" &>/dev/null
+    print_info "Setting user password for $USERNAME."
+    xchroot /mnt usermod -p "$(openssl passwd -6 "${USER_PASSWORD}")" "$USERNAME" &>/dev/null
 fi
 
+## Chroot Operations
+#
 # Export variables before chroot
-print_info "Passing variables to chroot environment..."
-export USERNAME ESP CRYPTROOT LUKS_PASSWORD disk_root disk_efi UUID REPOSITORY_VOID_PACKAGES
+export UUID LUKS_PASSWORD disk_root disk_efi USERNAME REPOSITORY_VOID_PACKAGES
 
 # Chroot and finalize the installation
-print_info "Finalizing the installation in chroot environment..."
+print_info "Finalizing the installation in chroot environment."
 xchroot /mnt /bin/bash -e <<'EOF'
-## Variables
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+    ## Main chroot script execution
+    #
+    # Define print_info inside chroot
+    print_info() { printf "\n\033[0;36m==> %s\033[0m\n" "$1"; }
 
-## Functions
-#
-# Print colorized messages
-print_msg() {
-    local color=$1
-    local message=$2
-    printf "\n${color}[::] %s${NC}\n" "$message"
-}
+    # Setting root ownership of /
+    print_info "Setting root ownership and permissions of /."
+    chown root:root /
+    chmod 755 /
 
-# Convenience functions for different message types
-print_info() { print_msg "$BLUE" "$1"; }
-print_success() { print_msg "$GREEN" "$1"; }
-print_error() { print_msg "$RED" "$1"; }
-print_warning() { print_msg "$YELLOW" "$1"; }
+    # Enable dbus, polkit, and NetworkManager
+    print_info "Enable the NetworkManager service."
+    ln -s /etc/sv/dbus /etc/runit/runsvdir/default/
+    ln -s /etc/sv/polkitd /etc/runit/runsvdir/default/
+    ln -s /etc/sv/NetworkManager /etc/runit/runsvdir/default/
 
-## Main chroot script execution
-#
-# Setting root ownership of /
-chown root:root /
-chmod 755 /
+    # Configure dracut
+    print_info "Adding needed dracut configuration files."
+    echo -e "hostonly=yes\nhostonly_cmdline=yes" >>/etc/dracut.conf.d/00-hostonly.conf
+    echo -e "add_dracutmodules+=\" crypt btrfs resume \"" >>/etc/dracut.conf.d/20-addmodules.conf
+    echo -e "tmpdir=/tmp" >>/etc/dracut.conf.d/30-tmpfs.conf
 
-# Enable dbus, polkit, and NetworkManager
-print_info "Enabling NetworkManager..."
-ln -s /etc/sv/dbus /etc/runit/runsvdir/default/
-ln -s /etc/sv/polkitd /etc/runit/runsvdir/default/
-ln -s /etc/sv/NetworkManager /etc/runit/runsvdir/default/
+    print_info "Generating new dracut initramfs."
+    dracut --regenerate-all --force --hostonly &>/dev/null
 
-# Configure dracut
-print_info "Adding needed dracut configuration files..."
-echo -e "hostonly=yes\nhostonly_cmdline=yes" >>/etc/dracut.conf.d/00-hostonly.conf
-echo -e "add_dracutmodules+=\" crypt btrfs resume \"" >>/etc/dracut.conf.d/20-addmodules.conf
-echo -e "tmpdir=/tmp" >>/etc/dracut.conf.d/30-tmpfs.conf
+    # Set the timezone
+    print_info "Setting the timezone in /etc/rc.conf."
+    TIMEZONE=$(curl -s http://ip-api.com/line?fields=timezone)
+    sed -i "/#TIMEZONE=/s|.*|TIMEZONE=$TIMEZONE|" /etc/rc.conf
 
-print_info "Generating new dracut initramfs..."
-dracut --regenerate-all --force --hostonly >/dev/null 2>&1
+    # Set the locale
+    print_info "Setting the locale."
+    sed -i '/^#en_US.UTF-8 UTF-8/s/^#//' /etc/default/libc-locales
+    xbps-reconfigure -f glibc-locales &>/dev/null
 
-# Set the timezone
-print_info "Setting the timezone in /etc/rc.conf..."
-sed -i "/#TIMEZONE=/s|.*|TIMEZONE="Europe/Sofia"|" /etc/rc.conf
+    # Install and configure GRUB
+    print_info "Generating random key file to avoid typing password twice at boot."
+    dd bs=512 count=4 if=/dev/random of=/boot/volume.key &>/dev/null
 
-# Set the locale
-print_info "Setting the locales in /etc/default/libc-locales..."
-sed -i '/^#en_US.UTF-8 UTF-8/s/^#//' /etc/default/libc-locales
-sed -i '/^#bg_BG.UTF-8 UTF-8/s/^#//' /etc/default/libc-locales
-xbps-reconfigure -f glibc-locales >/dev/null 2>&1
+    print_info "Adding the key to the encrypted partition."
+    printf "%s" "$LUKS_PASSWORD" | cryptsetup luksAddKey "$disk_root" /boot/volume.key -d - &>/dev/null
 
-# Install and configure GRUB
-print_info "Generating random key file to avoid typing password twice at boot..."
-dd bs=512 count=4 if=/dev/random of=/boot/volume.key >/dev/null 2>&1
+    print_info "Configuring the permissions of the key file."
+    chmod 000 /boot/volume.key
+    chmod -R g-rwx,o-rwx /boot
 
-print_info "Adding the key to the encrypted partition..."
-printf "%s" "$LUKS_PASSWORD" | cryptsetup luksAddKey "$disk_root" /boot/volume.key -d - >/dev/null 2>&1
+    print_info "Adding random key to /etc/crypttab."
+    echo -e "\ncryptroot UUID=$UUID /boot/volume.key luks\n" >>/etc/crypttab
 
-print_info "Configuring the permissions of the key file..."
-chmod 000 /boot/volume.key
-chmod -R g-rwx,o-rwx /boot
+    print_info "Adding random key to dracut configuration files."
+    echo -e "install_items+=\" /boot/volume.key /etc/crypttab \"" >>/etc/dracut.conf.d/10-crypt.conf
 
-print_info "Adding random key to /etc/crypttab..."
-echo -e "\ncryptroot UUID=$UUID /boot/volume.key luks\n" >>/etc/crypttab
+    print_info "Generating new dracut initramfs."
+    dracut --regenerate-all --force --hostonly &>/dev/null
 
-print_info "Adding random key to dracut configuration files..."
-echo -e "install_items+=\" /boot/volume.key /etc/crypttab \"" >>/etc/dracut.conf.d/10-crypt.conf
+    print_info "Enabling GRUB cryptodisk support."
+    echo "GRUB_ENABLE_CRYPTODISK=y" >> /etc/default/grub
 
-print_info "Generating new dracut initramfs..."
-dracut --regenerate-all --force --hostonly >/dev/null 2>&1
+    print_info "Installing GRUB on EFI partition."
+    grub-install --target=x86_64-efi --efi-directory=/boot/efi \
+        --bootloader-id=Void --recheck &>/dev/null
 
-print_info "Enabling GRUB cryptodisk support..."
-echo "GRUB_ENABLE_CRYPTODISK=y" >> /etc/default/grub
+    print_info "Enabling GRUB BTRFS integration."
+    ln -s /etc/sv/grub-btrfs /etc/runit/runsvdir/default/
 
-print_info 'Installing GRUB on EFI partition...'
-grub-install --target=x86_64-efi --efi-directory=/boot/efi \
-    --bootloader-id=Void --recheck >/dev/null 2>&1
+    # Add the EFI mount to fstab
+    print_info "Adding EFI mount to fstab."
+    ESP_UUID=$(blkid -s UUID -o value "$disk_efi")
+    echo "UUID=$ESP_UUID  /boot/efi  vfat  defaults,noatime  0 2" >> /etc/fstab
 
-print_info "Enabling GRUB BTRFS integration..."
-ln -s /etc/sv/grub-btrfs /etc/runit/runsvdir/default/
+    # Configure AppArmor
+    print_info "Configuring AppArmor and setting it to enforce."
+    sed -i "/APPARMOR=/s/.*/APPARMOR=enforce/" /etc/default/apparmor
+    sed -i "/#write-cache/s/^#//" /etc/apparmor/parser.conf
+    sed -i "/#show_notifications/s/^#//" /etc/apparmor/notify.conf
+    sed -i "/GRUB_CMDLINE_LINUX_DEFAULT=/s/\"$/ apparmor=1 security=apparmor&/" /etc/default/grub
 
-# Add the EFI mount to fstab
-print_info "Adding EFI mount to fstab..."
-# Use the actual device path to ensure we get the correct UUID
-ESP_UUID=$(blkid -s UUID -o value "$disk_efi")
-echo "UUID=$ESP_UUID  /boot/efi  vfat  defaults,noatime  0 2" >> /etc/fstab
+    print_info "Updating grub."
+    update-grub &>/dev/null
 
-# Configure AppArmor
-print_info "Configuring AppArmor and setting it to enforce..."
-sed -i "/APPARMOR=/s/.*/APPARMOR=enforce/" /etc/default/apparmor
-sed -i "/#write-cache/s/^#//" /etc/apparmor/parser.conf
-sed -i "/#show_notifications/s/^#//" /etc/apparmor/notify.conf
-sed -i "/GRUB_CMDLINE_LINUX_DEFAULT=/s/\"$/ apparmor=1 security=apparmor&/" /etc/default/grub
+    # Installing zram
+    print_info "Installing and configuring zram."
+    xbps-install -Syvu zramen &>/dev/null
+    ln -s /etc/sv/zramen /etc/runit/runsvdir/default/
 
-print_info "Updating grub..."
-update-grub >/dev/null 2>&1
+    # Install and configure snapper
+    print_info "Installing and configuring snapper."
+    umount /.snapshots 2>/dev/null
+    rm -rf /.snapshots
+    xbps-install -Syvu snapper &>/dev/null
+    snapper --no-dbus -c root create-config / &>/dev/null
+    btrfs subvolume delete /.snapshots &>/dev/null
+    mkdir -p /.snapshots
+    mount -a &>/dev/null
+    chmod 750 /.snapshots
 
-# Installing zram
-print_info "Installing and configuring zram..."
-xbps-install -Syvu zramen >/dev/null 2>&1
-ln -s /etc/sv/zramen /etc/runit/runsvdir/default/
+    # Clone the Void packages repository if the user opted for it
+    if [ "$REPOSITORY_VOID_PACKAGES" = "true" ]; then
+        print_info "Adding the Void packages repository."
+        mkdir -p /home/"$USERNAME"/void-packages
+        chown -R "$USERNAME":users /home/"$USERNAME"/void-packages
+        sudo -u "$USERNAME" git clone https://github.com/void-linux/void-packages.git /home/"$USERNAME"/void-packages &>/dev/null
+        print_info "Enabling restricted packages."
+        echo "XBPS_ALLOW_RESTRICTED=yes" >> /home/"$USERNAME"/void-packages/etc/conf
+    fi
 
-# Install and configure snapper
-print_info "Installing and configuring snapper."
-umount /.snapshots
-rm -r /.snapshots
-xbps-install -Syvu snapper >/dev/null 2>&1
-snapper --no-dbus -c root create-config / >/dev/null 2>&1
-btrfs subvolume delete /.snapshots >/dev/null 2>&1
-mkdir -p /.snapshots
-mount -a &>/dev/null
-chmod 750 /.snapshots
-
-# Clone the Void packages repository if the user opted for it
-print_info "Checking if Void packages repository should be added..."
-if [ "$REPOSITORY_VOID_PACKAGES" = "true" ]; then
-    print_info "Adding the Void packages repository..."
-    mkdir -p /home/"$USERNAME"/void-packages
-    chown -R "$USERNAME":users /home/"$USERNAME"/void-packages
-    sudo -u "$USERNAME" git clone https://github.com/void-linux/void-packages.git /home/"$USERNAME"/void-packages >/dev/null 2>&1
-    print_info "Enabling restricted packages..."
-    echo "XBPS_ALLOW_RESTRICTED=yes" >> /home/"$USERNAME"/void-packages/etc/conf
-fi
-
-# Reconfigure all installed packages
-print_info "Reconfiguring all installed packages..."
-xbps-reconfigure -fa >/dev/null 2>&1
+    # Reconfigure all installed packages
+    print_info "Reconfiguring all installed packages."
+    xbps-reconfigure -fa &>/dev/null
 EOF
 
 # Total execution time
 calculate_and_display_total_time
 
-# Unmount all mounted filesystems and reboot
-print_info "Unmounting all mounted filesystems and rebooting..."
-umount -R /mnt
-reboot
+# Prompt for reboot
+print_success "Installation complete!"
+while true; do
+    print_info "Do you want to reboot now? [Y/n]: "
+    read -r response
+    case "$response" in
+    [yY]|[yY][eE][sS]|"")
+        print_info "Unmounting all mounted filesystems and rebooting."
+        umount -R /mnt
+        reboot
+        exit 0
+        ;;
+    [nN]|[nN][oO])
+        print_info "Reboot skipped. Remember to unmount /mnt before rebooting manually."
+        echo ""
+        exit 0
+        ;;
+    *)
+        print_error "Please answer yes or no (y/n)."
+        ;;
+    esac
+done

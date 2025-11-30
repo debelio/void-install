@@ -319,8 +319,8 @@ print_info "Using $disk_efi as EFI partition and $disk_root as root partition."
 
 # Final check if devices exist
 if [ ! -e "$disk_efi" ] || [ ! -e "$disk_root" ]; then
-    print_error "Failed to detect partitions. Manual intervention required."
-    print_error "Expected partitions: $disk_efi and $disk_root not found."
+    print_error "Failed to detect partitions. Manual intervention required. 
+    Expected partitions: $disk_efi and $disk_root not found."
     fdisk -l "$DISK"
     exit 1
 fi
@@ -433,7 +433,7 @@ mkdir -p /mnt/var/db/xbps/keys
 cp /var/db/xbps/keys/* /mnt/var/db/xbps/keys/
 
 # First install just the base packages
-print_info "Installing base system."
+print_info "Installing base system (this may take a while)."
 xbps-install -Syvr /mnt -R "$REPO" base-system &>/dev/null
 
 # Then proceed with the rest of the packages

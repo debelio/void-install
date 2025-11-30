@@ -422,7 +422,7 @@ print_info "Installing additional packages."
 xbps-install -Syvr /mnt -R "$REPO" btrfs-progs cryptsetup grub-x86_64-efi \
     efibootmgr lvm2 grub-btrfs grub-btrfs-runit NetworkManager polkit apparmor \
     git curl util-linux tar coreutils binutils xtools xmirror void-repo-nonfree \
-    void-repo-multilib void-repo-multilib-nonfree gcc curl "$MICROCODE" &>/dev/null
+    void-repo-multilib void-repo-multilib-nonfree gcc snapper "$MICROCODE" &>/dev/null
 
 # Setting up chroot environment
 print_info "Setting up chroot environment."
@@ -475,6 +475,38 @@ if [[ -n "$USERNAME" ]]; then
     print_info "Setting user password for $USERNAME."
     xchroot /mnt usermod -p "$(openssl passwd -6 "${USER_PASSWORD}")" "$USERNAME" &>/dev/null
 fi
+
+# Configure snapper
+print_info "Configuring snapper for root and home."
+cp /mnt/usr/share/snapper/config-templates/default /mnt/etc/snapper/configs/root
+sed -i -e "s|ALLOW_USERS=\"\"|ALLOW_USERS=\"$USERNAME\"|" \
+    -e 's|SYNC_ACL="no"|SYNC_ACL="yes"|' \
+    /mnt/etc/snapper/configs/root
+cp /mnt/usr/share/snapper/config-templates/default /mnt/etc/snapper/configs/home
+sed -i \
+    -e 's|SUBVOLUME="/"|SUBVOLUME="/home"|' \
+    -e "s|ALLOW_USERS=\"\"|ALLOW_USERS=\"$USERNAME\"|" \
+    -e 's|SYNC_ACL="no"|SYNC_ACL="yes"|' \
+    /mnt/etc/snapper/configs/home
+sed -i \
+     's|SNAPPER_CONFIGS=""|SNAPPER_CONFIGS="root home"|' \
+    /mnt/etc/conf.d/snapper
+
+# Create the first snapshot of the root subvolume
+print_info "Creating the first snapshot of the root subvolume."
+mkdir /mnt/.snapshots/1
+cat >/mnt/.snapshots/1/info.xml <<EOF
+<?xml version="1.0"?>
+<snapshot>
+  <type>single</type>
+  <num>1</num>
+  <date>$(date -u +"%F %T")</date>
+  <description>first root subvolume</description>
+</snapshot>
+EOF
+btrfs subvolume snapshot /mnt /mnt/.snapshots/1/snapshot &>/dev/null
+SNAP_ID="$(btrfs inspect-internal rootid /mnt/.snapshots/1/snapshot)"
+btrfs subvolume set-default "${SNAP_ID}" /mnt
 
 ## Chroot Operations
 #
@@ -566,23 +598,13 @@ xchroot /mnt /bin/bash -e <<'EOF'
     xbps-install -Syv zramen &>/dev/null
     ln -s /etc/sv/zramen /etc/runit/runsvdir/default/
 
-    # Install and configure snapper
-    print_info "Installing and configuring snapper."
-    umount /.snapshots 2>/dev/null
-    rm -rf /.snapshots
-    xbps-install -Syvu snapper &>/dev/null
-    snapper --no-dbus -c root create-config / &>/dev/null
-    btrfs subvolume delete /.snapshots &>/dev/null
-    mkdir -p /.snapshots
-    mount -a &>/dev/null
-    chmod 750 /.snapshots
-
     # Clone the Void packages repository if the user opted for it
     if [ "$REPOSITORY_VOID_PACKAGES" = "true" ]; then
         print_info "Adding the Void packages repository."
         mkdir -p /home/"$USERNAME"/void-packages
         chown -R "$USERNAME":users /home/"$USERNAME"/void-packages
-        sudo -u "$USERNAME" git clone https://github.com/void-linux/void-packages.git /home/"$USERNAME"/void-packages &>/dev/null
+        sudo -u "$USERNAME" git clone https://github.com/void-linux/void-packages.git \
+            /home/"$USERNAME"/void-packages &>/dev/null
         print_info "Enabling restricted packages."
         echo "XBPS_ALLOW_RESTRICTED=yes" >> /home/"$USERNAME"/void-packages/etc/conf
     fi
@@ -595,25 +617,5 @@ EOF
 # Total execution time
 calculate_and_display_total_time
 
-# Prompt for reboot
-print_success "Installation complete!"
-while true; do
-    print_info "Do you want to reboot now? [Y/n]: "
-    read -r response
-    case "$response" in
-    [yY]|[yY][eE][sS]|"")
-        print_info "Unmounting all mounted filesystems and rebooting."
-        umount -R /mnt
-        reboot
-        exit 0
-        ;;
-    [nN]|[nN][oO])
-        print_info "Reboot skipped. Remember to unmount /mnt before rebooting manually."
-        echo ""
-        exit 0
-        ;;
-    *)
-        print_error "Please answer yes or no (y/n)."
-        ;;
-    esac
-done
+print_success "The installation is done. If needed, use xchroot /mnt to enter your new Void Linux system and do more changes. umount -R /mnt before rebooting."
+echo ""

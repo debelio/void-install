@@ -356,24 +356,43 @@ mount "$btrfs_device" /mnt
 # Define subvolumes and their mount points
 # Using separate subvolumes allows selective snapshots and excludes certain directories
 declare -A btrfs_subvolumes=(
-    [@]="/mnt"                          # Root subvolume
-    [@cache]="/mnt/var/cache"           # Package cache
-    [@docker]="/mnt/var/lib/docker"     # Docker data
-    [@home]="/mnt/home"                 # User home directories
-    [@libvirt]="/mnt/var/lib/libvirt"   # VM images
-    [@log]="/mnt/var/log"               # System logs
-    [@opt]="/mnt/opt"                   # Optional software
-    [@snapshots]="/mnt/.snapshots"      # Snapper snapshots directory
-    [@spool]="/mnt/var/spool"           # Print and mail queues
+    [@]="/mnt"                                  # Root subvolume
+    [@home]="/mnt/home"                         # User home directories
+    [@home/.snapshots]="/mnt/home/.snapshots"   # Snapper snapshots directory for home
+    [@opt]="/mnt/opt"                           # Optional software
+    [@.snapshots]="/mnt/.snapshots"             # Snapper snapshots directory for root
+    [@var/cache]="/mnt/var/cache"               # Package cache
+    [@var/lib/docker]="/mnt/var/lib/docker"     # Docker data
+    [@var/lib/libvirt]="/mnt/var/lib/libvirt"   # VM images
+    [@var/log]="/mnt/var/log"                   # System logs
+    [@var/spool]="/mnt/var/spool"               # Print and mail queues
     # TODO: Add @swap subvolume for hibernation support
-    # [@swap]="/mnt/swap"                 # Swap file location for hibernation
-    [@tmp]="/mnt/tmp"                   # Temporary files
+    # [@swap]="/mnt/swap"                         # Swap file location for hibernation
+    [@tmp]="/mnt/tmp"                           # Temporary files
 )
 
-# Create all subvolumes
+# Create all subvolumes in order (parent subvolumes first, then nested ones)
 print_info "Creating Btrfs subvolumes."
-for subvol in "${!btrfs_subvolumes[@]}"; do
-    btrfs subvolume create "/mnt/${subvol}" &>/dev/null
+# Sort subvolumes by path depth (number of slashes) to ensure parents are created first
+for subvol in $(printf '%s\n' "${!btrfs_subvolumes[@]}" | awk '{print gsub(/\//, "/"), $0}' | sort -n -k1 | cut -d' ' -f2-); do
+    # Build full path for nested subvolumes by creating all parent levels
+    if [[ "$subvol" == *"/"* ]]; then
+        # Split path and create each level if needed
+        path=""
+        IFS='/' read -ra parts <<< "$subvol"
+        for part in "${parts[@]}"; do
+            if [[ -n "$path" ]]; then
+                path="${path}/${part}"
+            else
+                path="$part"
+            fi
+            # Create this level if it doesn't exist yet
+            btrfs subvolume create "/mnt/${path}" &>/dev/null
+        done
+    else
+        # Top-level subvolume
+        btrfs subvolume create "/mnt/${subvol}" &>/dev/null
+    fi
 done
 
 # Mounting the newly created subvolumes
